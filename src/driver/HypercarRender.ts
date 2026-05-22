@@ -58,17 +58,14 @@ export class HypercarRender {
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
 
     // Initialize WebGLRenderer if running in visual context
-    if (canvas && typeof canvas.getContext === 'function') {
+    if (canvas) {
       try {
-        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        if (gl) {
-          this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-          const width = canvas.clientWidth || 800;
-          const height = canvas.clientHeight || 600;
-          this.renderer.setSize(width, height);
-        }
+        this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        const width = canvas.clientWidth || 800;
+        const height = canvas.clientHeight || 600;
+        this.renderer.setSize(width, height);
       } catch (err) {
-        console.warn('WebGL is not supported or failed to initialize, operating in headless mode.', err);
+        console.warn('WebGL failed to initialize, operating in headless mode.', err);
       }
     }
 
