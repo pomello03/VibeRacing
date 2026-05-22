@@ -1,0 +1,29 @@
+# Dependency directory
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+*.local
+
+# Tauri build outputs
+src-tauri/target/
+src-tauri/gen/
+
+# Antigravity CLI and other agent directories
+.antigravitycli/
+.agy/
+.gemini/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editor configs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -1,0 +1,22 @@
+{
+  "name": "viberacing-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "tauri": "tauri",
+    "test": "node --loader ts-node/esm src/test/sim.ts && node --loader ts-node/esm src/test/track_sim.ts && node --loader ts-node/esm src/test/ui_sim.ts && node --loader ts-node/esm src/test/driver_sim.ts && node --loader ts-node/esm src/test/progression_sim.ts && node --loader ts-node/esm src/test/stint_sim.ts && node --loader ts-node/esm src/test/engine_sim.ts"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/cli": "^2.11.2",
+    "@types/three": "^0.184.1",
+    "esbuild": "^0.28.0",
+    "three": "^0.184.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5",
+    "vite": "^8.0.14"
+  }
+}
