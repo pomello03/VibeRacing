@@ -12,6 +12,11 @@ export class HypercarRender {
   public carMesh: THREE.Mesh | null = null;
   public racingLineMesh: THREE.LineLoop | null = null;
 
+  // Camera smooth target tracking (Art of Rally follow style)
+  private camSmoothPos = new THREE.Vector3();
+  private camSmoothLookAt = new THREE.Vector3();
+  private isCamInitialized: boolean = false;
+
   // Domain models
   public track: TrackGenerator;
   public state: SharedGameState;
@@ -43,10 +48,22 @@ export class HypercarRender {
     this.inputHandler = inputHandler;
 
     // Load initial states from kinematics
-    const pos = this.state.kinematics?.position || { x: 0, y: 0, z: 0 };
+    let pos = this.state.kinematics?.position || { x: 0, y: 0, z: 0 };
+    if (pos.x === 0 && pos.z === 0 && this.track.nodes.length > 0) {
+      const startNode = this.track.nodes[0];
+      pos = { x: startNode.position.x, y: startNode.position.y, z: startNode.position.z };
+      this.yaw = Math.atan2(startNode.tangent.z, startNode.tangent.x);
+      if (this.state.kinematics) {
+        this.state.kinematics.position.x = pos.x;
+        this.state.kinematics.position.y = pos.y;
+        this.state.kinematics.position.z = pos.z;
+        this.state.kinematics.heading = this.yaw;
+      }
+    } else {
+      this.yaw = this.state.kinematics?.heading || 0.0;
+    }
     this.carPos.x = pos.x;
     this.carPos.z = pos.z;
-    this.yaw = this.state.kinematics?.heading || 0.0;
     this.velYaw = this.yaw;
 
     const velVec = this.state.kinematics?.velocity || { x: 0, y: 0, z: 0 };
@@ -54,8 +71,17 @@ export class HypercarRender {
 
     // Setup base three.js infrastructure
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#030712'); // Midnight black ambient base
+    this.scene.background = new THREE.Color('#0b0f19'); // Deep cosmic indigo ambient base
+    this.scene.fog = new THREE.FogExp2('#0b0f19', this.weatherFog);
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+
+    // Add high-end lighting to make materials pop (Art of Rally signature clean shadow look)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
+    this.scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
+    dirLight.position.set(120, 200, 70);
+    this.scene.add(dirLight);
 
     // Initialize WebGLRenderer if running in visual context
     if (canvas) {
@@ -130,16 +156,11 @@ export class HypercarRender {
     geom.setIndex(indices);
     geom.computeVertexNormals();
 
-    // Custom volumetric fog shader material (charcoal surface color)
-    const trackMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uCarPosition: { value: new THREE.Vector3(this.carPos.x, 0, this.carPos.z) },
-        uFogColor: { value: new THREE.Color('#030712') },
-        uBaseColor: { value: new THREE.Color('#1f2937') }, // charcoal
-        uFogDensity: { value: this.weatherFog }
-      },
-      vertexShader: this.getVertexShader(),
-      fragmentShader: this.getFragmentShader(),
+    // Standard high-fidelity MeshStandardMaterial (charcoal surface color)
+    const trackMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1f2937,
+      roughness: 0.8,
+      metalness: 0.2,
       side: THREE.DoubleSide
     });
 
@@ -157,15 +178,10 @@ export class HypercarRender {
     }
     lineGeom.setAttribute('position', new THREE.BufferAttribute(lineVertices, 3));
 
-    const lineMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uCarPosition: { value: new THREE.Vector3(this.carPos.x, 0, this.carPos.z) },
-        uFogColor: { value: new THREE.Color('#030712') },
-        uBaseColor: { value: new THREE.Color('#10b981') }, // emerald green default
-        uFogDensity: { value: this.weatherFog }
-      },
-      vertexShader: this.getLineVertexShader(),
-      fragmentShader: this.getLineFragmentShader()
+    // Standard LineBasicMaterial that works perfectly on all WebGL drivers
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0x10b981,
+      linewidth: 3
     });
 
     this.racingLineMesh = new THREE.LineLoop(lineGeom, lineMaterial);
@@ -178,16 +194,11 @@ export class HypercarRender {
   private buildVehicleMesh(): void {
     const geom = new THREE.BoxGeometry(1.8, 0.6, 3.8);
 
-    // Custom volumetric fog shader material (vibrant red vehicle)
-    const carMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uCarPosition: { value: new THREE.Vector3(this.carPos.x, 0, this.carPos.z) },
-        uFogColor: { value: new THREE.Color('#030712') },
-        uBaseColor: { value: new THREE.Color('#ef4444') }, // vivid crimson
-        uFogDensity: { value: this.weatherFog }
-      },
-      vertexShader: this.getVertexShader(),
-      fragmentShader: this.getFragmentShader()
+    // Standard high-fidelity MeshStandardMaterial (vivid crimson vehicle)
+    const carMaterial = new THREE.MeshStandardMaterial({
+      color: 0xef4444,
+      roughness: 0.3,
+      metalness: 0.8
     });
 
     this.carMesh = new THREE.Mesh(geom, carMaterial);
@@ -199,92 +210,7 @@ export class HypercarRender {
     this.carMesh.rotation.y = -this.yaw;
   }
 
-  /**
-   * GLSL Vertex Shader: Computes world coordinates, calculates distance to car,
-   * passes standard normal and distance down to the fragment shader.
-   */
-  private getVertexShader(): string {
-    return `
-      uniform vec3 uCarPosition;
-      varying float vDist;
-      varying vec3 vNormal;
-      varying vec3 vWorldPos;
-
-      void main() {
-        vNormal = normalize(normalMatrix * normal);
-        vec4 wPos = modelMatrix * vec4(position, 1.0);
-        vWorldPos = wPos.xyz;
-        vDist = distance(wPos.xyz, uCarPosition);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `;
-  }
-
-  /**
-   * GLSL Fragment Shader: Applies dynamic weather-dependent atmospheric fog.
-   */
-  private getFragmentShader(): string {
-    return `
-      uniform vec3 uFogColor;
-      uniform vec3 uBaseColor;
-      uniform float uFogDensity;
-      varying float vDist;
-      varying vec3 vNormal;
-
-      void main() {
-        // Retro diffuse shading contribution
-        vec3 lightDir = normalize(vec3(0.3, 1.0, 0.4));
-        float diffuse = clamp(dot(normalize(vNormal), lightDir), 0.0, 1.0);
-        vec3 litColor = uBaseColor * (0.55 + 0.45 * diffuse);
-
-        // Volumetric fog exponential decay based on weather fog density
-        float fogFactor = exp(-vDist * uFogDensity);
-        fogFactor = clamp(fogFactor, 0.0, 1.0);
-        vec3 finalColor = mix(uFogColor, litColor, fogFactor);
-
-        gl_FragColor = vec4(finalColor, 1.0);
-      }
-    `;
-  }
-
-  /**
-   * GLSL Line Vertex Shader: Computes world coordinates and calculates distance to car,
-   * without using normals.
-   */
-  private getLineVertexShader(): string {
-    return `
-      uniform vec3 uCarPosition;
-      varying float vDist;
-
-      void main() {
-        vec4 wPos = modelMatrix * vec4(position, 1.0);
-        vDist = distance(wPos.xyz, uCarPosition);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `;
-  }
-
-  /**
-   * GLSL Line Fragment Shader: Applies dynamic weather-dependent atmospheric fog
-   * without diffuse shading.
-   */
-  private getLineFragmentShader(): string {
-    return `
-      uniform vec3 uFogColor;
-      uniform vec3 uBaseColor;
-      uniform float uFogDensity;
-      varying float vDist;
-
-      void main() {
-        // Volumetric fog exponential decay based on weather fog density
-        float fogFactor = exp(-vDist * uFogDensity);
-        fogFactor = clamp(fogFactor, 0.0, 1.0);
-        vec3 finalColor = mix(uFogColor, uBaseColor, fogFactor);
-
-        gl_FragColor = vec4(finalColor, 1.0);
-      }
-    `;
-  }
+  // Removed custom shaders in favor of robust standard Three.js materials
 
   /**
    * Dynamic real-time physics tick integrating engine parameters and inputs.
@@ -369,60 +295,70 @@ export class HypercarRender {
       this.carMesh.rotation.y = -this.yaw;
     }
 
-    // Update uniforms for both materials to anchor fog calculation
-    const carPos3D = new THREE.Vector3(this.carPos.x, yVal, this.carPos.z);
-    if (this.trackMesh) {
-      const mat = this.trackMesh.material as THREE.ShaderMaterial;
-      if (mat.uniforms) {
-        if (mat.uniforms.uCarPosition) mat.uniforms.uCarPosition.value.copy(carPos3D);
-        if (mat.uniforms.uFogDensity) mat.uniforms.uFogDensity.value = this.weatherFog;
-      }
+    // Dynamic weather fog density adjustment
+    if (this.scene.fog && this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.density = this.weatherFog;
     }
-    if (this.carMesh) {
-      const mat = this.carMesh.material as THREE.ShaderMaterial;
-      if (mat.uniforms) {
-        if (mat.uniforms.uCarPosition) mat.uniforms.uCarPosition.value.copy(carPos3D);
-        if (mat.uniforms.uFogDensity) mat.uniforms.uFogDensity.value = this.weatherFog;
-      }
-    }
+
     if (this.racingLineMesh) {
-      const mat = this.racingLineMesh.material as THREE.ShaderMaterial;
-      if (mat.uniforms) {
-        if (mat.uniforms.uCarPosition) mat.uniforms.uCarPosition.value.copy(carPos3D);
-        if (mat.uniforms.uFogDensity) mat.uniforms.uFogDensity.value = this.weatherFog;
-
-        // Dynamic visual racing line color changes by active track TensionZone
-        let colorHex = '#10b981'; // Rettilineo (Straights) -> Emerald Green
-        if (snappedNode.tensionZone === 'Staccata') {
-          colorHex = '#ef4444'; // Staccata (Braking) -> Racing Red
-        } else if (snappedNode.tensionZone === 'Percorrenza') {
-          colorHex = '#3b82f6'; // Percorrenza (Cornering) -> Electric Blue
-        }
-        if (mat.uniforms.uBaseColor) {
-          mat.uniforms.uBaseColor.value.set(colorHex);
-        }
+      const mat = this.racingLineMesh.material as THREE.LineBasicMaterial;
+      // Dynamic visual racing line color changes by active track TensionZone
+      let colorHex = 0x10b981; // Rettilineo (Straights) -> Emerald Green
+      if (snappedNode.tensionZone === 'Staccata') {
+        colorHex = 0xef4444; // Staccata (Braking) -> Racing Red
+      } else if (snappedNode.tensionZone === 'Percorrenza') {
+        colorHex = 0x3b82f6; // Percorrenza (Cornering) -> Electric Blue
       }
+      mat.color.setHex(colorHex);
     }
 
-    // Align camera dynamically behind the car
-    const camDist = 12.0;
-    const camHeight = 3.5;
-    const camX = this.carPos.x - camDist * Math.cos(this.yaw);
-    const camZ = this.carPos.z - camDist * Math.sin(this.yaw);
-    this.camera.position.set(camX, yVal + camHeight, camZ);
+    // --- Art of Rally Follow Camera Mechanic ---
+    // Overhead follow camera with smooth lag (position & lookAt target) to prevent motion sickness and anticipate curves.
+    const lookAheadDistance = this.velocity * 0.45 + 5.0; // look further ahead proportionally to speed
+    const futureNodeIdx = (snappedNode.index + Math.round(lookAheadDistance)) % this.track.nodes.length;
+    const futureNode = this.track.nodes[futureNodeIdx];
+    const lookAtTarget = new THREE.Vector3(
+      futureNode.position.x,
+      yVal + 0.8,
+      futureNode.position.z
+    );
+
+    const camDist = 14.5;
+    const camHeight = 5.5; // elevated overhead for the iconic Art of Rally angle
+    const targetCamX = this.carPos.x - camDist * Math.cos(this.yaw);
+    const targetCamZ = this.carPos.z - camDist * Math.sin(this.yaw);
+    const targetCamPos = new THREE.Vector3(targetCamX, yVal + camHeight, targetCamZ);
+
+    if (!this.isCamInitialized) {
+      this.camSmoothPos.copy(targetCamPos);
+      this.camSmoothLookAt.copy(lookAtTarget);
+      this.isCamInitialized = true;
+    } else {
+      const followLerpFactor = 1.0 - Math.exp(-5.0 * dt);
+      const lookAtLerpFactor = 1.0 - Math.exp(-3.5 * dt);
+      
+      this.camSmoothPos.lerp(targetCamPos, followLerpFactor);
+      this.camSmoothLookAt.lerp(lookAtTarget, lookAtLerpFactor);
+    }
+
+    this.camera.position.copy(this.camSmoothPos);
 
     if (misShift) {
       this.weatherFog = 0.05;
-      this.camera.position.x += (Math.random() - 0.5) * 0.4;
-      this.camera.position.y += (Math.random() - 0.5) * 0.4;
-      this.camera.position.z += (Math.random() - 0.5) * 0.4;
-      const shakeX = (Math.random() - 0.5) * 0.4;
-      const shakeY = (Math.random() - 0.5) * 0.4;
-      const shakeZ = (Math.random() - 0.5) * 0.4;
-      this.camera.lookAt(new THREE.Vector3(this.carPos.x + shakeX, yVal + 0.8 + shakeY, this.carPos.z + shakeZ));
+      const shakeStrength = 0.3;
+      this.camera.position.x += (Math.random() - 0.5) * shakeStrength;
+      this.camera.position.y += (Math.random() - 0.5) * shakeStrength;
+      this.camera.position.z += (Math.random() - 0.5) * shakeStrength;
+      
+      const shakeTarget = this.camSmoothLookAt.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * shakeStrength,
+        (Math.random() - 0.5) * shakeStrength,
+        (Math.random() - 0.5) * shakeStrength
+      ));
+      this.camera.lookAt(shakeTarget);
     } else {
       this.weatherFog = 0.005;
-      this.camera.lookAt(new THREE.Vector3(this.carPos.x, yVal + 0.8, this.carPos.z));
+      this.camera.lookAt(this.camSmoothLookAt);
     }
 
     // 9. Sync physical state back to SharedGameState parameters
