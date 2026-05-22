@@ -167,8 +167,8 @@ export class HypercarRender {
         uBaseColor: { value: new THREE.Color('#10b981') }, // emerald green default
         uFogDensity: { value: this.weatherFog }
       },
-      vertexShader: this.getVertexShader(),
-      fragmentShader: this.getFragmentShader()
+      vertexShader: this.getLineVertexShader(),
+      fragmentShader: this.getLineFragmentShader()
     });
 
     this.racingLineMesh = new THREE.LineLoop(lineGeom, lineMaterial);
@@ -244,6 +244,45 @@ export class HypercarRender {
         float fogFactor = exp(-vDist * uFogDensity);
         fogFactor = clamp(fogFactor, 0.0, 1.0);
         vec3 finalColor = mix(uFogColor, litColor, fogFactor);
+
+        gl_FragColor = vec4(finalColor, 1.0);
+      }
+    `;
+  }
+
+  /**
+   * GLSL Line Vertex Shader: Computes world coordinates and calculates distance to car,
+   * without using normals.
+   */
+  private getLineVertexShader(): string {
+    return `
+      uniform vec3 uCarPosition;
+      varying float vDist;
+
+      void main() {
+        vec4 wPos = modelMatrix * vec4(position, 1.0);
+        vDist = distance(wPos.xyz, uCarPosition);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+  }
+
+  /**
+   * GLSL Line Fragment Shader: Applies dynamic weather-dependent atmospheric fog
+   * without diffuse shading.
+   */
+  private getLineFragmentShader(): string {
+    return `
+      uniform vec3 uFogColor;
+      uniform vec3 uBaseColor;
+      uniform float uFogDensity;
+      varying float vDist;
+
+      void main() {
+        // Volumetric fog exponential decay based on weather fog density
+        float fogFactor = exp(-vDist * uFogDensity);
+        fogFactor = clamp(fogFactor, 0.0, 1.0);
+        vec3 finalColor = mix(uFogColor, uBaseColor, fogFactor);
 
         gl_FragColor = vec4(finalColor, 1.0);
       }
